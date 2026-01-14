@@ -13,9 +13,9 @@ client = Client({
 })
 
 SERVICENOW_CREDS = {
-    "instance_url": "https://your-instance.service-now.com",
+    "instance_url": "",
     "username": "",
-    "password": "REDACTED_PASSWORD"
+    "password": ""
 }
 
 

@@ -25,6 +25,7 @@ MANIFEST
 
 # Virtual Environment
 venv/
+.venv/
 env/
 ENV/
 env.bak/
@@ -37,11 +38,13 @@ venv.bak/
 *.swo
 *~
 .DS_Store
+.claude/
 
 # Environment Variables
 .env
 .env.local
 .env.*.local
+test_results/
 
 # Testing
 .pytest_cache/

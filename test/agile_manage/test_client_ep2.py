@@ -14,9 +14,9 @@ client = Client({
 })
 
 SERVICENOW_CREDS = {
-    "instance_url": "https://your-instance.service-now.com",
+    "instance_url": "",
     "username": "admin",
-    "password": "REDACTED_PASSWORD"
+    "password": ""
 }
 
 # New main function for test_client.py to test all epic tools
