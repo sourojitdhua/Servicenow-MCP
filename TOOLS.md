@@ -167,17 +167,17 @@
 | 87 | `update_script_include` | Updates an existing Script Include. |
 | 88 | `delete_script_include` | Deletes a Script Include from ServiceNow. |
 
-## Update Set / Changeset Management (7 tools)
+## Update Set Management (7 tools)
 
 | # | Tool | Description |
 |---|------|-------------|
 | 89 | `list_changesets` | Lists local Update Sets (Changesets), with options to filter. |
-| 90 | `get_changeset_details` | Retrieves full details for a single changeset. |
+| 90 | `get_changeset_details` | Retrieves full details for a single update set. |
 | 91 | `create_changeset` | Creates a new local Update Set (changeset). |
-| 92 | `update_changeset` | Updates an existing changeset (name or description). |
-| 93 | `commit_changeset` | Marks a changeset as complete. |
-| 94 | `publish_changeset` | Publishes a completed changeset for retrieval by remote instances. |
-| 95 | `add_file_to_changeset` | Adds (tracks) a configuration record inside the specified changeset. |
+| 92 | `update_changeset` | Updates an existing update set (name or description). |
+| 93 | `commit_changeset` | Marks an update set as complete. |
+| 94 | `publish_changeset` | Publishes a completed update set for retrieval by remote instances. |
+| 95 | `add_file_to_changeset` | Adds (tracks) a configuration record inside the specified update set. |
 
 ## UI Policy Management (2 tools)
 
