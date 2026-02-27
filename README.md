@@ -26,7 +26,7 @@ Whether you're building AI agents, automating ITSM workflows, or creating intell
 ### 💡 Why snow-mcp?
 
 - **🎨 AI-Native Design**: Purpose-built for AI agents and LLM-powered automation
-- **🔧 106 Pre-Built Tools**: Comprehensive coverage of ITSM, ITOM, and App Dev operations
+- **🔧 [106 Pre-Built Tools](TOOLS.md)**: Comprehensive coverage of ITSM, ITOM, and App Dev operations
 - **⚡ Production-Ready**: Robust error handling, retry logic, and input validation
 - **🧩 Modular Architecture**: Clean, extensible design for easy customization
 - **📚 Self-Documenting**: Built-in CLI for tool discovery and exploration
