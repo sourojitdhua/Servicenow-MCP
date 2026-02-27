@@ -24,7 +24,7 @@ This guide shows you how to set up the MCP server, connect it to Claude (or any 
    - [Knowledge Base](#knowledge-base)
    - [Agile & Project Management](#agile--project-management)
    - [Workflow & Script Management](#workflow--script-management)
-   - [Update Sets / Changesets](#update-sets--changesets)
+   - [Update Sets](#update-sets)
    - [Generic Table Operations & Analytics](#generic-table-operations--analytics)
    - [Multi-Step Workflows](#multi-step-workflows)
 6. [Tips for Writing Effective Prompts](#6-tips-for-writing-effective-prompts)
@@ -453,7 +453,7 @@ to "Utility for formatting and sending templated emails."
 
 ---
 
-### Update Sets / Changesets
+### Update Sets
 
 **45. Create and manage an update set**
 ```
@@ -566,7 +566,7 @@ The real power is cross-module prompts:
 | Project Management | 3 | Project CRUD |
 | Workflow Management | 5 | Workflow CRUD |
 | Script Includes | 5 | Script Include CRUD |
-| Changesets | 7 | Update set lifecycle |
+| Update Sets | 7 | Update set lifecycle |
 | UI Policies | 2 | UI policy and action creation |
 | Table Management | 8 | Generic CRUD, schema, search, batch update |
 | Analytics | 1 | Aggregation queries (COUNT, AVG, SUM, etc.) |

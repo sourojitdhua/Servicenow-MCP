@@ -209,7 +209,14 @@ class ServiceNowClient:
                     "message": "Operation completed successfully with no content returned.",
                 }
             }
-        return response.json()
+        try:
+            return response.json()
+        except ValueError:
+            raise ServiceNowAPIError(
+                message=f"Invalid JSON in response ({response.status_code})",
+                status_code=response.status_code,
+                response_body=response.text[:500],
+            )
 
     async def send_raw_request(
         self,
@@ -227,7 +234,14 @@ class ServiceNowClient:
         response = await self._request_with_retry(
             method, endpoint, headers=final_headers, content=data, params=params
         )
-        return response.json()
+        try:
+            return response.json()
+        except ValueError:
+            raise ServiceNowAPIError(
+                message=f"Invalid JSON in response ({response.status_code})",
+                status_code=response.status_code,
+                response_body=response.text[:500],
+            )
 
     # ------------------------------------------------------------------
     #  Private helpers

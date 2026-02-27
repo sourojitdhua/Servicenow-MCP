@@ -5,12 +5,12 @@ Tools for interacting with the ServiceNow Configuration Management Database (CMD
 """
 
 from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
 from fastmcp import FastMCP
 
-from servicenow_mcp_server.models import BaseToolParams
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.models import BaseToolParams, get_client
+from servicenow_mcp_server.tool_annotations import READ, WRITE
+from servicenow_mcp_server.tool_utils import snow_tool
 
 
 # ==============================================================================
@@ -19,12 +19,14 @@ from servicenow_mcp_server.exceptions import ServiceNowError
 
 def register_tools(mcp: FastMCP):
     """Registers all CMDB management tools with the main MCP server instance."""
-    mcp.add_tool(list_ci_classes)
-    mcp.add_tool(get_ci)
-    mcp.add_tool(list_cis)
-    mcp.add_tool(create_ci)
-    mcp.add_tool(update_ci)
-    mcp.add_tool(get_ci_relationships)
+    _tags = {"cmdb"}
+
+    mcp.tool(list_ci_classes, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(get_ci, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(list_cis, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(create_ci, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(update_ci, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(get_ci_relationships, tags=_tags | {"read"}, annotations=READ)
 
 
 # ==============================================================================
@@ -69,122 +71,86 @@ class GetCIRelationshipsParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def list_ci_classes(params: ListCIClassesParams) -> Dict[str, Any]:
     """
     Lists CMDB CI classes by querying the sys_db_object table filtered for CMDB tables.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            query_parts = ["nameSTARTSWITHcmdb_ci"]
-            if params.filter:
-                query_parts.append(f"nameLIKE{params.filter}^ORlabelLIKE{params.filter}")
+    async with get_client() as client:
+        query_parts = ["nameSTARTSWITHcmdb_ci"]
+        if params.filter:
+            query_parts.append(f"nameLIKE{params.filter}^ORlabelLIKE{params.filter}")
 
-            final_query = "^".join(query_parts)
-            query_params = {
-                "sysparm_query": final_query,
-                "sysparm_fields": "name,label,super_class",
-                "sysparm_limit": params.limit,
-            }
-            return await client.send_request("GET", "/api/now/table/sys_db_object", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        final_query = "^".join(query_parts)
+        query_params = {
+            "sysparm_query": final_query,
+            "sysparm_fields": "name,label,super_class",
+            "sysparm_limit": params.limit,
+        }
+        return await client.send_request("GET", "/api/now/table/sys_db_object", params=query_params)
 
 
+@snow_tool
 async def get_ci(params: GetCIParams) -> Dict[str, Any]:
     """
     Retrieves the full details of a single Configuration Item by its sys_id.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            endpoint = f"/api/now/table/{params.ci_class}/{params.sys_id}"
-            return await client.send_request("GET", endpoint)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        endpoint = f"/api/now/table/{params.ci_class}/{params.sys_id}"
+        return await client.send_request("GET", endpoint)
 
 
+@snow_tool
 async def list_cis(params: ListCIsParams) -> Dict[str, Any]:
     """
     Lists Configuration Items from a CMDB class table with query and pagination support.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            query_params = {
-                "sysparm_limit": params.limit,
-                "sysparm_offset": params.offset,
-            }
-            if params.query:
-                query_params["sysparm_query"] = params.query
+    async with get_client() as client:
+        query_params = {
+            "sysparm_limit": params.limit,
+            "sysparm_offset": params.offset,
+        }
+        if params.query:
+            query_params["sysparm_query"] = params.query
 
-            endpoint = f"/api/now/table/{params.ci_class}"
-            return await client.send_request("GET", endpoint, params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        endpoint = f"/api/now/table/{params.ci_class}"
+        return await client.send_request("GET", endpoint, params=query_params)
 
 
+@snow_tool
 async def create_ci(params: CreateCIParams) -> Dict[str, Any]:
     """
     Creates a new Configuration Item in the specified CMDB class table.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            payload: Dict[str, Any] = {"name": params.name}
-            if params.data:
-                payload.update(params.data)
+    async with get_client() as client:
+        payload: Dict[str, Any] = {"name": params.name}
+        if params.data:
+            payload.update(params.data)
 
-            endpoint = f"/api/now/table/{params.ci_class}"
-            return await client.send_request("POST", endpoint, data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        endpoint = f"/api/now/table/{params.ci_class}"
+        return await client.send_request("POST", endpoint, data=payload)
 
 
+@snow_tool
 async def update_ci(params: UpdateCIParams) -> Dict[str, Any]:
     """
     Updates an existing Configuration Item in the specified CMDB class table.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            endpoint = f"/api/now/table/{params.ci_class}/{params.sys_id}"
-            return await client.send_request("PATCH", endpoint, data=params.data)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        endpoint = f"/api/now/table/{params.ci_class}/{params.sys_id}"
+        return await client.send_request("PATCH", endpoint, data=params.data)
 
 
+@snow_tool
 async def get_ci_relationships(params: GetCIRelationshipsParams) -> Dict[str, Any]:
     """
     Retrieves all relationships for a Configuration Item (both parent and child).
     Queries the cmdb_rel_ci table.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            query = f"parent={params.sys_id}^ORchild={params.sys_id}"
-            query_params = {
-                "sysparm_query": query,
-                "sysparm_limit": params.limit,
-            }
-            return await client.send_request("GET", "/api/now/table/cmdb_rel_ci", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        query = f"parent={params.sys_id}^ORchild={params.sys_id}"
+        query_params = {
+            "sysparm_query": query,
+            "sysparm_limit": params.limit,
+        }
+        return await client.send_request("GET", "/api/now/table/cmdb_rel_ci", params=query_params)

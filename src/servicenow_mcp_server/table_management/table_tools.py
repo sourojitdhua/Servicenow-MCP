@@ -6,23 +6,25 @@ This module defines generic tools for interacting with any ServiceNow table.
 
 from typing import Dict, Any, List, Optional
 from pydantic import Field
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
 
-from servicenow_mcp_server.models import BaseToolParams
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.models import BaseToolParams, get_client
+from servicenow_mcp_server.tool_annotations import READ, WRITE, DELETE
+from servicenow_mcp_server.tool_utils import snow_tool
 
 
 def register_tools(mcp: FastMCP):
     """Adds all tools defined in this file to the main server's MCP instance."""
-    mcp.add_tool(list_available_tables)
-    mcp.add_tool(get_records_from_table)
-    mcp.add_tool(get_table_schema)
-    mcp.add_tool(search_records_by_text)
-    mcp.add_tool(create_record)
-    mcp.add_tool(update_record)
-    mcp.add_tool(delete_record)
-    mcp.add_tool(batch_update_records)
+    _tags = {"table"}
+
+    mcp.tool(list_available_tables, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(get_records_from_table, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(get_table_schema, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(search_records_by_text, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(create_record, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(update_record, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(delete_record, tags=_tags | {"delete"}, annotations=DELETE)
+    mcp.tool(batch_update_records, tags=_tags | {"write"}, annotations=WRITE)
 
 
 # ==============================================================================
@@ -73,222 +75,169 @@ class BatchUpdateRecordsParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def list_available_tables(params: ListTablesParams) -> Dict[str, Any]:
     """
     Lists tables in the instance by querying the system's metadata table (sys_db_object).
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # Define the specific fields we want to make the response efficient.
-            fields_to_get = "name,label,super_class"
+    async with get_client() as client:
+        fields_to_get = "name,label,super_class"
 
-            # Build a robust query.
-            # We start by filtering for tables that are extendable and have a label,
-            # which removes a lot of internal system noise.
-            query_parts = ["is_extendable=true", "labelISNOTEMPTY"]
+        query_parts = ["is_extendable=true", "labelISNOTEMPTY"]
 
-            # If the user provides a filter, add it to the query.
-            # This will search in both the table 'name' (e.g., cmdb_ci) and its 'label' (e.g., Configuration Item).
-            if params.filter:
-                filter_term = params.filter
-                query_parts.append(f"nameLIKE{filter_term}^ORlabelLIKE{filter_term}")
+        if params.filter:
+            filter_term = params.filter
+            query_parts.append(f"nameLIKE{filter_term}^ORlabelLIKE{filter_term}")
 
-            # Join the query parts with '^' which is ServiceNow's 'AND' operator.
-            final_query = "^".join(query_parts)
+        final_query = "^".join(query_parts)
 
-            query_params = {
-                "sysparm_fields": fields_to_get,
-                "sysparm_query": final_query,
-                "sysparm_limit": 200  # Limit the results to avoid overly large responses
-            }
+        query_params = {
+            "sysparm_fields": fields_to_get,
+            "sysparm_query": final_query,
+            "sysparm_limit": 200
+        }
 
-            # We now query the standard 'sys_db_object' table which is guaranteed to exist.
-            return await client.send_request("GET", "/api/now/table/sys_db_object", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", "/api/now/table/sys_db_object", params=query_params)
 
 
+@snow_tool
 async def get_records_from_table(params: GetRecordsParams) -> Dict[str, Any]:
     """
     Retrieves records from any specified table with advanced filtering, sorting, and pagination.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # Start building the dictionary of query parameters
-            query_params = {
-                "sysparm_limit": params.limit,
-                "sysparm_offset": params.offset
-            }
+    async with get_client() as client:
+        query_params = {
+            "sysparm_limit": params.limit,
+            "sysparm_offset": params.offset
+        }
 
-            # Add optional parameters if they were provided
-            if params.query:
-                query_params["sysparm_query"] = params.query
+        if params.query:
+            query_params["sysparm_query"] = params.query
 
-            if params.fields:
-                query_params["sysparm_fields"] = ",".join(params.fields)
+        if params.fields:
+            query_params["sysparm_fields"] = ",".join(params.fields)
 
-            if params.sort_by:
-                # For sorting, the field name and direction are combined in the query
-                sort_direction = "DESC" if params.sort_dir.upper() == "DESC" else "ASC"
-                # If a query already exists, append the ORDERBY. Otherwise, create it.
-                existing_query = query_params.get("sysparm_query", "")
-                if existing_query:
-                    query_params["sysparm_query"] = f"{existing_query}^ORDERBY{sort_direction}{params.sort_by}"
-                else:
-                    query_params["sysparm_query"] = f"ORDERBY{sort_direction}{params.sort_by}"
+        if params.sort_by:
+            # ServiceNow syntax: ORDERBY<field> for ASC, ORDERBYDESC<field> for DESC
+            sort_prefix = "ORDERBYDESC" if params.sort_dir.upper() == "DESC" else "ORDERBY"
+            existing_query = query_params.get("sysparm_query", "")
+            if existing_query:
+                query_params["sysparm_query"] = f"{existing_query}^{sort_prefix}{params.sort_by}"
+            else:
+                query_params["sysparm_query"] = f"{sort_prefix}{params.sort_by}"
 
-            # The table name is part of the URL path, not the query parameters
-            endpoint = f"/api/now/table/{params.table_name}"
+        endpoint = f"/api/now/table/{params.table_name}"
 
-            return await client.send_request("GET", endpoint, params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", endpoint, params=query_params)
 
 
+@snow_tool
 async def get_table_schema(params: GetTableSchemaParams) -> Dict[str, Any]:
     """
     Retrieves the schema (column names, types, etc.) for a specific table
     by querying the system's data dictionary (sys_dictionary).
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
+    async with get_client() as client:
+        schema_query_params = {
+            "sysparm_query": f"name={params.table_name}^internal_typeISNOTEMPTY",
+            "sysparm_fields": "element,internal_type,max_length,mandatory,display,reference"
+        }
 
-            # This is the correct, robust way to get a table's schema.
-            schema_query_params = {
-                # Query for dictionary entries where the table name matches
-                # and it has an internal type (to filter out non-column entries).
-                "sysparm_query": f"name={params.table_name}^internal_typeISNOTEMPTY",
-
-                # Request the specific schema-related fields we care about.
-                "sysparm_fields": "element,internal_type,max_length,mandatory,display,reference"
-            }
-
-            # Make a standard API call to the 'sys_dictionary' table.
-            # This uses the existing, working 'send_request' method.
-            return await client.send_request("GET", "/api/now/table/sys_dictionary", params=schema_query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", "/api/now/table/sys_dictionary", params=schema_query_params)
 
 
-
+@snow_tool
 async def search_records_by_text(params: SearchRecordsParams) -> Dict[str, Any]:
     """
     Searches for a term in the common text fields of a table using a LIKE query.
     This provides a reliable, real-time search without relying on text indexing.
     Common fields searched: 'short_description', 'description', 'number', 'comments', 'work_notes'.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            term = params.search_term
+    async with get_client() as client:
+        term = params.search_term
 
-            # This is a more direct and reliable query method than text indexing.
-            # It checks if the search term is contained within several common fields.
-            # The '^OR' acts as an "OR" between each condition.
-            query_parts = [
-                f"short_descriptionLIKE{term}",
-                f"descriptionLIKE{term}",
-                f"numberLIKE{term}",
-                f"commentsLIKE{term}",
-                f"work_notesLIKE{term}"
-            ]
-            query = "^OR".join(query_parts)
+        query_parts = [
+            f"short_descriptionLIKE{term}",
+            f"descriptionLIKE{term}",
+            f"numberLIKE{term}",
+            f"commentsLIKE{term}",
+            f"work_notesLIKE{term}"
+        ]
+        query = "^OR".join(query_parts)
 
-            query_params = {
-                "sysparm_query": query,
-                "sysparm_limit": params.limit
-            }
+        query_params = {
+            "sysparm_query": query,
+            "sysparm_limit": params.limit
+        }
 
-            endpoint = f"/api/now/table/{params.table_name}"
+        endpoint = f"/api/now/table/{params.table_name}"
 
-            return await client.send_request("GET", endpoint, params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", endpoint, params=query_params)
 
 
 # ==============================================================================
 #  New Generic CRUD Tools
 # ==============================================================================
 
+@snow_tool
 async def create_record(params: CreateRecordParams) -> Dict[str, Any]:
     """
     Creates a new record in any specified ServiceNow table with arbitrary field data.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            endpoint = f"/api/now/table/{params.table_name}"
-            return await client.send_request("POST", endpoint, data=params.data)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        endpoint = f"/api/now/table/{params.table_name}"
+        return await client.send_request("POST", endpoint, data=params.data)
 
 
+@snow_tool
 async def update_record(params: UpdateRecordParams) -> Dict[str, Any]:
     """
     Updates an existing record in any specified ServiceNow table.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            endpoint = f"/api/now/table/{params.table_name}/{params.sys_id}"
-            return await client.send_request("PATCH", endpoint, data=params.data)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        endpoint = f"/api/now/table/{params.table_name}/{params.sys_id}"
+        return await client.send_request("PATCH", endpoint, data=params.data)
 
 
+@snow_tool
 async def delete_record(params: DeleteRecordParams) -> Dict[str, Any]:
     """
     Deletes a record from any specified ServiceNow table.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            endpoint = f"/api/now/table/{params.table_name}/{params.sys_id}"
-            return await client.send_request("DELETE", endpoint)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        endpoint = f"/api/now/table/{params.table_name}/{params.sys_id}"
+        return await client.send_request("DELETE", endpoint)
 
 
-async def batch_update_records(params: BatchUpdateRecordsParams) -> Dict[str, Any]:
+async def batch_update_records(params: BatchUpdateRecordsParams, ctx: Context) -> Dict[str, Any]:
     """
     Updates multiple records in a table with the same data.
     Returns a summary of successes and failures.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            successes = []
-            failures = []
+    from servicenow_mcp_server.exceptions import ServiceNowError
 
-            for sys_id in params.sys_ids:
-                try:
-                    endpoint = f"/api/now/table/{params.table_name}/{sys_id}"
-                    await client.send_request("PATCH", endpoint, data=params.data)
-                    successes.append(sys_id)
-                except ServiceNowError as e:
-                    failures.append({
-                        "sys_id": sys_id,
-                        "error": type(e).__name__,
-                        "message": e.message,
-                    })
+    async with get_client() as client:
+        successes = []
+        failures = []
+        total = len(params.sys_ids)
 
-            return {
-                "status": "Completed",
-                "updated_count": len(successes),
-                "failed_count": len(failures),
-                "successful_updates": successes,
-                "failed_updates": failures,
-            }
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        for i, sys_id in enumerate(params.sys_ids):
+            try:
+                endpoint = f"/api/now/table/{params.table_name}/{sys_id}"
+                await client.send_request("PATCH", endpoint, data=params.data)
+                successes.append(sys_id)
+            except ServiceNowError as e:
+                failures.append({
+                    "sys_id": sys_id,
+                    "error": type(e).__name__,
+                    "message": e.message,
+                })
+            await ctx.report_progress(i + 1, total, f"Updated {i + 1}/{total} records")
+
+        return {
+            "status": "Completed",
+            "updated_count": len(successes),
+            "failed_count": len(failures),
+            "successful_updates": successes,
+            "failed_updates": failures,
+        }

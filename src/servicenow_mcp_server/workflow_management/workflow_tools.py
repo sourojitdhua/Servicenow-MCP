@@ -7,17 +7,19 @@ This module defines tools for interacting with ServiceNow Workflow definitions.
 from typing import Dict, Any, Optional
 from pydantic import Field
 from fastmcp import FastMCP
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.models import BaseToolParams
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.models import BaseToolParams, get_client
+from servicenow_mcp_server.tool_annotations import READ, WRITE, DELETE
+from servicenow_mcp_server.tool_utils import snow_tool
 
 def register_tools(mcp: FastMCP):
     """Adds all tools defined in this file to the main server's MCP instance."""
-    mcp.add_tool(list_workflows)
-    mcp.add_tool(get_workflow)
-    mcp.add_tool(create_workflow)
-    mcp.add_tool(update_workflow)
-    mcp.add_tool(delete_workflow)
+    _tags = {"workflow"}
+
+    mcp.tool(list_workflows, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(get_workflow, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(create_workflow, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(update_workflow, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(delete_workflow, tags=_tags | {"delete"}, annotations=DELETE)
 
 # ==============================================================================
 #  Pydantic Models
@@ -50,91 +52,80 @@ class DeleteWorkflowParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def list_workflows(params: ListWorkflowsParams) -> Dict[str, Any]:
     """
     Lists workflow definitions, with options to filter by name or associated table.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # The table for workflow definitions is 'wf_workflow'.
-            query_parts = ["published=true"] # Typically only want to see active, published workflows
+    async with get_client() as client:
+        query_parts = ["published=true"]
 
-            if params.name_filter:
-                query_parts.append(f"nameLIKE{params.name_filter}")
-            if params.table_filter:
-                query_parts.append(f"table={params.table_filter}")
+        if params.name_filter:
+            query_parts.append(f"nameLIKE{params.name_filter}")
+        if params.table_filter:
+            query_parts.append(f"table={params.table_filter}")
 
-            final_query = "^".join(query_parts)
+        final_query = "^".join(query_parts)
 
-            query_params = {
-                "sysparm_query": final_query,
-                "sysparm_limit": params.limit,
-                "sysparm_fields": "name,table,sys_id,published,description"
-            }
+        query_params = {
+            "sysparm_query": final_query,
+            "sysparm_limit": params.limit,
+            "sysparm_fields": "name,table,sys_id,published,description"
+        }
 
-            return await client.send_request("GET", "/api/now/table/wf_workflow", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", "/api/now/table/wf_workflow", params=query_params)
 
 
+@snow_tool
 async def get_workflow(params: GetWorkflowParams) -> Dict[str, Any]:
     """
     Retrieve a single workflow definition by sys_id.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            return await client.send_request(
-                "GET",
-                f"/api/now/table/wf_workflow/{params.sys_id}"
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        return await client.send_request(
+            "GET",
+            f"/api/now/table/wf_workflow/{params.sys_id}"
+        )
 
+@snow_tool
 async def create_workflow(params: CreateWorkflowParams) -> Dict[str, Any]:
     """
     Create a new workflow definition.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password"},
-                exclude_unset=True
-            )
-            return await client.send_request(
-                "POST",
-                "/api/now/table/wf_workflow",
-                data=payload
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        payload = params.model_dump(
+            exclude=set(),
+            exclude_unset=True
+        )
+        return await client.send_request(
+            "POST",
+            "/api/now/table/wf_workflow",
+            data=payload
+        )
 
+@snow_tool
 async def update_workflow(params: UpdateWorkflowParams) -> Dict[str, Any]:
     """
     Update an existing workflow definition.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password", "sys_id"},
-                exclude_unset=True
-            )
-            return await client.send_request(
-                "PATCH",
-                f"/api/now/table/wf_workflow/{params.sys_id}",
-                data=payload
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        payload = params.model_dump(
+            exclude={"sys_id"},
+            exclude_unset=True
+        )
+        return await client.send_request(
+            "PATCH",
+            f"/api/now/table/wf_workflow/{params.sys_id}",
+            data=payload
+        )
 
+@snow_tool
 async def delete_workflow(params: DeleteWorkflowParams) -> Dict[str, Any]:
     """
     Delete a workflow definition from ServiceNow.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            return await client.send_request(
-                "DELETE",
-                f"/api/now/table/wf_workflow/{params.sys_id}"
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        return await client.send_request(
+            "DELETE",
+            f"/api/now/table/wf_workflow/{params.sys_id}"
+        )

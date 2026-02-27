@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-Example script to list ServiceNow Update Sets (Changesets) using the MCP server.
+Example script to list ServiceNow Update Sets using the MCP server.
+
+Credentials are read from environment variables by the MCP server:
+  SERVICENOW_INSTANCE, SERVICENOW_USERNAME, SERVICENOW_PASSWORD
 """
 
 import asyncio
+import json
 import os
 from dotenv import load_dotenv
 from fastmcp import Client
@@ -13,17 +17,16 @@ load_dotenv()
 
 async def list_update_sets():
     """List update sets from ServiceNow using the MCP server."""
-    
-    # Get ServiceNow credentials from environment variables
+
     instance_url = os.getenv("SERVICENOW_INSTANCE")
     username = os.getenv("SERVICENOW_USERNAME")
     password = os.getenv("SERVICENOW_PASSWORD")
-    
+
     if not all([instance_url, username, password]):
-        print("❌ Error: Missing ServiceNow credentials in .env file")
+        print("Error: Missing ServiceNow credentials in .env file")
         print("Required: SERVICENOW_INSTANCE, SERVICENOW_USERNAME, SERVICENOW_PASSWORD")
         return
-    
+
     # Create a client connection to the snow-mcp server
     client = Client({
         "mcpServers": {
@@ -33,81 +36,70 @@ async def list_update_sets():
             }
         }
     })
-    
+
     async with client:
         # Ping to ensure connection
         await client.ping()
-        print("✓ Connected to ServiceNow MCP Server\n")
-        
-        # List all available changesets (update sets)
+        print("Connected to ServiceNow MCP Server\n")
+
+        # List all available update sets
         print("=" * 70)
-        print("LISTING UPDATE SETS (CHANGESETS)")
+        print("LISTING UPDATE SETS")
         print("=" * 70)
-        
-        # Call the list_changesets tool with credentials
+
+        # Call the list_update_sets tool (credentials handled by server)
         result = await client.call_tool(
-            "list_changesets",
+            "list_update_sets",
             arguments={
-                "instance_url": instance_url,
-                "username": username,
-                "password": password,
-                "state_filter": "in progress",  # Filter by state
-                "limit": 10  # Limit to 10 results
+                "state_filter": "in progress",
+                "limit": 10
             }
         )
-        
-        print("\n📦 Update Sets (In Progress):")
+
+        print("\nUpdate Sets (In Progress):")
         print("-" * 70)
-        
-        if result and "result" in result[0].content[0].text:
-            import json
-            data = json.loads(result[0].content[0].text)
-            
+
+        if result:
+            data = json.loads(result[0].text)
+
             if "result" in data and data["result"]:
-                for idx, changeset in enumerate(data["result"], 1):
-                    print(f"\n{idx}. {changeset.get('name', 'N/A')}")
-                    print(f"   Sys ID: {changeset.get('sys_id', 'N/A')}")
-                    print(f"   State: {changeset.get('state', 'N/A')}")
-                    print(f"   Created By: {changeset.get('sys_created_by', 'N/A')}")
-                    if changeset.get('description'):
-                        print(f"   Description: {changeset.get('description')}")
+                for idx, update_set in enumerate(data["result"], 1):
+                    print(f"\n{idx}. {update_set.get('name', 'N/A')}")
+                    print(f"   Sys ID: {update_set.get('sys_id', 'N/A')}")
+                    print(f"   State: {update_set.get('state', 'N/A')}")
+                    print(f"   Created By: {update_set.get('sys_created_by', 'N/A')}")
+                    if update_set.get('description'):
+                        print(f"   Description: {update_set.get('description')}")
             else:
                 print("No update sets found with the specified filter.")
-        else:
-            print("Error retrieving update sets.")
-            print(result)
-        
+
         print("\n" + "=" * 70)
-        
-        # You can also list all update sets (any state)
-        print("\n📦 All Update Sets (Any State):")
+
+        # List all update sets (any state)
+        print("\nAll Update Sets (Any State):")
         print("-" * 70)
-        
+
         result_all = await client.call_tool(
-            "list_changesets",
+            "list_update_sets",
             arguments={
-                "instance_url": instance_url,
-                "username": username,
-                "password": password,
-                "state_filter": "",  # No state filter
+                "state_filter": "",
                 "limit": 5
             }
         )
-        
-        if result_all and "result" in result_all[0].content[0].text:
-            import json
-            data = json.loads(result_all[0].content[0].text)
-            
+
+        if result_all:
+            data = json.loads(result_all[0].text)
+
             if "result" in data and data["result"]:
-                for idx, changeset in enumerate(data["result"], 1):
-                    print(f"\n{idx}. {changeset.get('name', 'N/A')}")
-                    print(f"   State: {changeset.get('state', 'N/A')}")
-                    print(f"   Sys ID: {changeset.get('sys_id', 'N/A')}")
+                for idx, update_set in enumerate(data["result"], 1):
+                    print(f"\n{idx}. {update_set.get('name', 'N/A')}")
+                    print(f"   State: {update_set.get('state', 'N/A')}")
+                    print(f"   Sys ID: {update_set.get('sys_id', 'N/A')}")
             else:
                 print("No update sets found.")
-        
+
         print("\n" + "=" * 70)
-        print("✓ Complete!")
+        print("Complete!")
 
 if __name__ == "__main__":
     asyncio.run(list_update_sets())

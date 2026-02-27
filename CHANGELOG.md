@@ -5,6 +5,39 @@ All notable changes to the ServiceNow MCP Server will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-27
+
+### Added
+- **Lifespan management**: Shared `ServiceNowClient` HTTP connection opened once at startup, reused across all 106 tool calls (eliminates per-call TCP overhead)
+- **Tool tags**: All tools tagged by module (`incident`, `change`, `cmdb`, `catalog`, `kb`, `user`, `problem`, `sla`, `request`, `agile`, `project`, `workflow`, `script_include`, `update_set`, `table`, `analytics`, `ui_policy`) and operation type (`read`, `write`, `delete`)
+- **Tool annotations**: All tools annotated with `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so MCP clients can distinguish safe vs. destructive operations
+- **`@snow_tool` decorator**: Centralized error handling — catches `ServiceNowError` and raises `ToolError` with `isError=true` in MCP responses
+- **Middleware**: `LoggingMiddleware`, `TimingMiddleware`, `ErrorHandlingMiddleware` for cross-cutting observability
+- **Prompt templates**: 5 workflow prompts — `triage_incident`, `create_change_workflow`, `investigate_ci_impact`, `onboard_user`, `weekly_incident_report`
+- **Context injection**: Progress reporting via `ctx.report_progress()` in batch tools (`batch_update_records`, `add_group_members`, `remove_group_members`, `move_catalog_items`)
+- **MCP resources**: Server info resource (`mcp://servicenow`) and entity lookup resources for incidents, KB articles, changes, users, and CMDB CIs
+- **Server instructions**: LLM-facing instructions for tool usage guidance
+- New `tool_annotations.py`, `tool_utils.py`, and `prompts.py` modules
+
+### Changed
+- `fastmcp` dependency bumped from `>=2.1.0` to `>=3.0.0`
+- `BaseToolParams` no longer accepts credential fields — credentials managed at server lifespan level
+- All 106 tool functions simplified: removed ~320 lines of duplicated `try/except ServiceNowError` boilerplate
+- `get_client()` now returns shared lifespan client or falls back to per-call client creation
+
+### Fixed
+- Resource endpoint paths missing leading `/` (e.g., `api/now/table/...` → `/api/now/table/...`)
+- `get_incident_by_number` resource used wrong query parameter (`number=X` → `sysparm_query=number=X`)
+- `ORDERBYASC` sort syntax in `get_records_from_table` (invalid ServiceNow syntax → correct `ORDERBY`/`ORDERBYDESC`)
+- `add_group_members`/`remove_group_members` — single failure no longer aborts entire batch
+- `move_catalog_items`/`batch_update_records` — added missing `ServiceNowError` import for error handling
+- `attach_file_to_record` base64 error now raises `ToolError` instead of returning error dict
+- `send_request`/`send_raw_request` — added `JSONDecodeError` handling for non-JSON responses
+- `Optional[int]` for `limit`/`offset` in `ListEpicsParams` changed to `int` (None would break API calls)
+- Removed unused imports (`BaseModel`, `List`, `ServiceNowError`) across 9+ tool modules
+- `setup.cfg` version synced to 0.3.0, `fastmcp` dependency to `>=3.0.0`, description updated
+- Retroactive annotation removed from v0.1.0 changelog entry
+
 ## [0.2.0] - 2026-02-26
 
 ### Added
@@ -66,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2024-12-01
 
 ### Added
-- Initial release with 60+ ServiceNow tools (now 106 in v0.2.0)
+- Initial release with 60+ ServiceNow tools
 - Support for ITSM operations (Incidents, Changes, Requests)
 - Service Catalog management tools
 - User and Group management
@@ -75,7 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Knowledge base operations
 - Workflow management
 - Script Include management
-- Update Set (Changeset) management
+- Update Set management
 - UI Policy management
 - Reporting and analytics tools
 - Claude Desktop integration
@@ -101,4 +134,4 @@ First public release of the ServiceNow MCP Server. Provides comprehensive covera
 ---
 
 **Maintainer:** Sourojit Dhua  
-**Repository:** https://github.com/yourusername/ServicenowMCP
+**Repository:** https://github.com/sourojitdhua/Servicenow-MCP

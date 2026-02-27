@@ -8,13 +8,15 @@ Aggregate API.
 from typing import Dict, Any, Optional, List
 from pydantic import Field
 from fastmcp import FastMCP
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.models import BaseToolParams
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.models import BaseToolParams, get_client
+from servicenow_mcp_server.tool_annotations import READ
+from servicenow_mcp_server.tool_utils import snow_tool
 
 def register_tools(mcp: FastMCP):
     """Adds all tools defined in this file to the main server's MCP instance."""
-    mcp.add_tool(get_aggregate_data)
+    _tags = {"analytics"}
+
+    mcp.tool(get_aggregate_data, tags=_tags | {"read"}, annotations=READ)
 
 # ==============================================================================
 #  Pydantic Models
@@ -31,24 +33,21 @@ class GetAggregateDataParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def get_aggregate_data(params: GetAggregateDataParams) -> Dict[str, Any]:
     """
     Performs an aggregation (COUNT, AVG, SUM, etc.) on a table, with optional grouping.
     This is powerful for real-time statistics.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # This tool uses the special 'stats' endpoint, not the 'table' endpoint.
-            endpoint = f"/api/now/stats/{params.table_name}"
+    async with get_client() as client:
+        endpoint = f"/api/now/stats/{params.table_name}"
 
-            query_params = {
-                "sysparm_count": "true", # Using COUNT as a base, but the function parameter will override
-                "sysparm_query": params.query or "",
-                "sysparm_aggr_fields": params.field_to_aggregate or "", # Field for AVG/SUM
-                "sysparm_group_by": ",".join(params.group_by_fields) if params.group_by_fields else "",
-                "sysparm_aggregation": params.aggregation_function # The main function
-            }
+        query_params = {
+            "sysparm_count": "true",
+            "sysparm_query": params.query or "",
+            "sysparm_aggr_fields": params.field_to_aggregate or "",
+            "sysparm_group_by": ",".join(params.group_by_fields) if params.group_by_fields else "",
+            "sysparm_aggregation": params.aggregation_function
+        }
 
-            return await client.send_request("GET", endpoint, params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", endpoint, params=query_params)

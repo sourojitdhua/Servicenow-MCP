@@ -7,17 +7,19 @@ This module defines tools for interacting with ServiceNow Script Includes.
 from typing import Dict, Any, Optional
 from pydantic import Field
 from fastmcp import FastMCP
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.models import BaseToolParams
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.models import BaseToolParams, get_client
+from servicenow_mcp_server.tool_annotations import READ, WRITE, DELETE
+from servicenow_mcp_server.tool_utils import snow_tool
 
 def register_tools(mcp: FastMCP):
     """Adds all tools defined in this file to the main server's MCP instance."""
-    mcp.add_tool(list_script_includes)
-    mcp.add_tool(get_script_include)
-    mcp.add_tool(create_script_include)
-    mcp.add_tool(update_script_include)
-    mcp.add_tool(delete_script_include)
+    _tags = {"script_include"}
+
+    mcp.tool(list_script_includes, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(get_script_include, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(create_script_include, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(update_script_include, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(delete_script_include, tags=_tags | {"delete"}, annotations=DELETE)
 
 # ==============================================================================
 #  Pydantic Models
@@ -55,91 +57,80 @@ class DeleteScriptIncludeParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def list_script_includes(params: ListScriptIncludesParams) -> Dict[str, Any]:
     """
     Lists Script Includes, with options to filter by name or API name.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # The table for Script Includes is 'sys_script_include'.
-            query_parts = ["active=true"]
+    async with get_client() as client:
+        query_parts = ["active=true"]
 
-            if params.name_filter:
-                query_parts.append(f"nameLIKE{params.name_filter}")
-            if params.api_name_filter:
-                query_parts.append(f"api_name={params.api_name_filter}")
+        if params.name_filter:
+            query_parts.append(f"nameLIKE{params.name_filter}")
+        if params.api_name_filter:
+            query_parts.append(f"api_name={params.api_name_filter}")
 
-            final_query = "^".join(query_parts)
+        final_query = "^".join(query_parts)
 
-            query_params = {
-                "sysparm_query": final_query,
-                "sysparm_limit": params.limit,
-                "sysparm_fields": "name,api_name,sys_id,active,description"
-            }
+        query_params = {
+            "sysparm_query": final_query,
+            "sysparm_limit": params.limit,
+            "sysparm_fields": "name,api_name,sys_id,active,description"
+        }
 
-            return await client.send_request("GET", "/api/now/table/sys_script_include", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", "/api/now/table/sys_script_include", params=query_params)
 
 
+@snow_tool
 async def get_script_include(params: GetScriptIncludeParams) -> Dict[str, Any]:
     """
     Retrieve a single Script Include by sys_id.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            return await client.send_request(
-                "GET",
-                f"/api/now/table/sys_script_include/{params.sys_id}"
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        return await client.send_request(
+            "GET",
+            f"/api/now/table/sys_script_include/{params.sys_id}"
+        )
 
+@snow_tool
 async def create_script_include(params: CreateScriptIncludeParams) -> Dict[str, Any]:
     """
     Create a new Script Include in ServiceNow.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password"},
-                exclude_unset=True
-            )
-            return await client.send_request(
-                "POST",
-                "/api/now/table/sys_script_include",
-                data=payload
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        payload = params.model_dump(
+            exclude=set(),
+            exclude_unset=True
+        )
+        return await client.send_request(
+            "POST",
+            "/api/now/table/sys_script_include",
+            data=payload
+        )
 
+@snow_tool
 async def update_script_include(params: UpdateScriptIncludeParams) -> Dict[str, Any]:
     """
     Update an existing Script Include in ServiceNow.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password", "sys_id"},
-                exclude_unset=True
-            )
-            return await client.send_request(
-                "PATCH",
-                f"/api/now/table/sys_script_include/{params.sys_id}",
-                data=payload
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        payload = params.model_dump(
+            exclude={"sys_id"},
+            exclude_unset=True
+        )
+        return await client.send_request(
+            "PATCH",
+            f"/api/now/table/sys_script_include/{params.sys_id}",
+            data=payload
+        )
 
+@snow_tool
 async def delete_script_include(params: DeleteScriptIncludeParams) -> Dict[str, Any]:
     """
     Delete a Script Include from ServiceNow.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            return await client.send_request(
-                "DELETE",
-                f"/api/now/table/sys_script_include/{params.sys_id}"
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        return await client.send_request(
+            "DELETE",
+            f"/api/now/table/sys_script_include/{params.sys_id}"
+        )

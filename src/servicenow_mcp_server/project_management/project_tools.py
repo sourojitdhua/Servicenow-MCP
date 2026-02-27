@@ -7,15 +7,17 @@ This module defines tools for interacting with the ServiceNow Project Management
 from typing import Dict, Any, Optional
 from pydantic import Field
 from fastmcp import FastMCP
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.models import BaseToolParams
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.models import BaseToolParams, get_client
+from servicenow_mcp_server.tool_annotations import READ, WRITE
+from servicenow_mcp_server.tool_utils import snow_tool
 
 def register_tools(mcp: FastMCP):
     """Adds all tools defined in this file to the main server's MCP instance."""
-    mcp.add_tool(create_project)
-    mcp.add_tool(update_project)
-    mcp.add_tool(list_projects)
+    _tags = {"project"}
+
+    mcp.tool(create_project, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(update_project, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(list_projects, tags=_tags | {"read"}, annotations=READ)
 
 # ==============================================================================
 #  Pydantic Models
@@ -47,65 +49,58 @@ class ListProjectsParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def create_project(params: CreateProjectParams) -> Dict[str, Any]:
     """
     Creates a new project.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # The primary table for projects is 'pm_project'.
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password"},
-                exclude_unset=True
-            )
+    async with get_client() as client:
+        payload = params.model_dump(
+            exclude=set(),
+            exclude_unset=True
+        )
 
-            return await client.send_request("POST", "/api/now/table/pm_project", data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("POST", "/api/now/table/pm_project", data=payload)
 
 
+@snow_tool
 async def update_project(params: UpdateProjectParams) -> Dict[str, Any]:
     """
     Updates an existing project in ServiceNow.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password", "sys_id"},
-                exclude_unset=True
-            )
-            return await client.send_request(
-                "PATCH",
-                f"/api/now/table/pm_project/{params.sys_id}",
-                data=payload
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        payload = params.model_dump(
+            exclude={"sys_id"},
+            exclude_unset=True
+        )
+        return await client.send_request(
+            "PATCH",
+            f"/api/now/table/pm_project/{params.sys_id}",
+            data=payload
+        )
 
+@snow_tool
 async def list_projects(params: ListProjectsParams) -> Dict[str, Any]:
     """
     Lists projects from ServiceNow with optional filters.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            query_parts = []
-            if params.project_manager:
-                query_parts.append(f"project_manager={params.project_manager}")
-            if params.state:
-                query_parts.append(f"state={params.state}")
+    async with get_client() as client:
+        query_parts = []
+        if params.project_manager:
+            query_parts.append(f"project_manager={params.project_manager}")
+        if params.state:
+            query_parts.append(f"state={params.state}")
 
-            query = "^".join(query_parts)
-            params_dict = {
-                "sysparm_limit": min(max(params.limit, 1), 100),
-                "sysparm_offset": max(params.offset, 0)
-            }
-            if query:
-                params_dict["sysparm_query"] = query
+        query = "^".join(query_parts)
+        params_dict = {
+            "sysparm_limit": min(max(params.limit, 1), 100),
+            "sysparm_offset": max(params.offset, 0)
+        }
+        if query:
+            params_dict["sysparm_query"] = query
 
-            return await client.send_request(
-                "GET",
-                "/api/now/table/pm_project",
-                params=params_dict
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request(
+            "GET",
+            "/api/now/table/pm_project",
+            params=params_dict
+        )

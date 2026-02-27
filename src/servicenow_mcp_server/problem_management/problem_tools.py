@@ -5,12 +5,12 @@ Tools for interacting with the ServiceNow Problem Management process.
 """
 
 from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
 from fastmcp import FastMCP
 
-from servicenow_mcp_server.models import BaseToolParams
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.models import BaseToolParams, get_client
+from servicenow_mcp_server.tool_annotations import READ, WRITE
+from servicenow_mcp_server.tool_utils import snow_tool
 
 
 # ==============================================================================
@@ -19,11 +19,13 @@ from servicenow_mcp_server.exceptions import ServiceNowError
 
 def register_tools(mcp: FastMCP):
     """Registers all problem management tools with the main MCP server instance."""
-    mcp.add_tool(create_problem)
-    mcp.add_tool(update_problem)
-    mcp.add_tool(list_problems)
-    mcp.add_tool(get_problem)
-    mcp.add_tool(create_known_error)
+    _tags = {"problem"}
+
+    mcp.tool(create_problem, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(update_problem, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(list_problems, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(get_problem, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(create_known_error, tags=_tags | {"write"}, annotations=WRITE)
 
 
 # ==============================================================================
@@ -69,100 +71,70 @@ class CreateKnownErrorParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def create_problem(params: CreateProblemParams) -> Dict[str, Any]:
     """
     Creates a new problem record in ServiceNow.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password"},
-                exclude_unset=True,
-            )
-            return await client.send_request("POST", "/api/now/table/problem", data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        payload = params.model_dump(
+            exclude=set(),
+            exclude_unset=True,
+        )
+        return await client.send_request("POST", "/api/now/table/problem", data=payload)
 
 
+@snow_tool
 async def update_problem(params: UpdateProblemParams) -> Dict[str, Any]:
     """
     Updates one or more fields on an existing problem record.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            update_data = params.model_dump(
-                exclude={"sys_id", "instance_url", "username", "password"},
-                exclude_unset=True,
-            )
-            if not update_data:
-                return {"error": "No update data provided.", "message": "You must provide at least one field to update."}
+    async with get_client() as client:
+        update_data = params.model_dump(
+            exclude={"sys_id"},
+            exclude_unset=True,
+        )
+        if not update_data:
+            return {"error": "No update data provided.", "message": "You must provide at least one field to update."}
 
-            endpoint = f"/api/now/table/problem/{params.sys_id}"
-            return await client.send_request("PATCH", endpoint, data=update_data)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        endpoint = f"/api/now/table/problem/{params.sys_id}"
+        return await client.send_request("PATCH", endpoint, data=update_data)
 
 
+@snow_tool
 async def list_problems(params: ListProblemsParams) -> Dict[str, Any]:
     """
     Lists problem records with optional filtering and pagination.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            query_params = {
-                "sysparm_limit": params.limit,
-                "sysparm_offset": params.offset,
-            }
-            if params.query:
-                query_params["sysparm_query"] = params.query
+    async with get_client() as client:
+        query_params = {
+            "sysparm_limit": params.limit,
+            "sysparm_offset": params.offset,
+        }
+        if params.query:
+            query_params["sysparm_query"] = params.query
 
-            return await client.send_request("GET", "/api/now/table/problem", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", "/api/now/table/problem", params=query_params)
 
 
+@snow_tool
 async def get_problem(params: GetProblemParams) -> Dict[str, Any]:
     """
     Retrieves the full details of a single problem record by its sys_id.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            return await client.send_request("GET", f"/api/now/table/problem/{params.sys_id}")
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        return await client.send_request("GET", f"/api/now/table/problem/{params.sys_id}")
 
 
+@snow_tool
 async def create_known_error(params: CreateKnownErrorParams) -> Dict[str, Any]:
     """
     Marks an existing problem as a Known Error and sets the workaround.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            payload = {
-                "known_error": "true",
-                "work_around": params.workaround,
-            }
-            endpoint = f"/api/now/table/problem/{params.sys_id}"
-            return await client.send_request("PATCH", endpoint, data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        payload = {
+            "known_error": "true",
+            "work_around": params.workaround,
+        }
+        endpoint = f"/api/now/table/problem/{params.sys_id}"
+        return await client.send_request("PATCH", endpoint, data=payload)

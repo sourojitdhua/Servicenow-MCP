@@ -13,8 +13,7 @@ def load_config() -> dict | None:
     2. A .env file in the current working directory.
     3. A JSON file specified by the SERVICENOW_CONFIG_JSON env var.
 
-    Returns the config dict on success, or None if no credentials are found
-    (logs a warning instead of crashing so per-call credentials still work).
+    Returns the config dict on success, or None if no credentials are found.
     """
     # Load .env file contents into environment variables
     load_dotenv()
@@ -32,9 +31,9 @@ def load_config() -> dict | None:
             logger.info("Loaded ServiceNow credentials from JSON config: %s", json_path)
             return json.load(f)
 
-    # If neither is found, warn but don't crash — tools can still receive per-call creds.
+    # If neither is found, warn but don't crash — server startup continues.
     logger.warning(
         "ServiceNow credentials not found in environment or config file. "
-        "Tools will require credentials to be passed per-call."
+        "Set SERVICENOW_INSTANCE, SERVICENOW_USERNAME, and SERVICENOW_PASSWORD."
     )
     return None

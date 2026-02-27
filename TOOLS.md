@@ -106,12 +106,12 @@
 |---|------|-------------|
 | 57 | `create_knowledge_base` | Creates a new Knowledge Base. |
 | 58 | `list_knowledge_bases` | Lists knowledge bases with optional title filter. |
-| 59 | `create_category` | Creates a new category inside a Knowledge Base. |
-| 60 | `create_article` | Creates a new knowledge article. |
-| 61 | `update_article` | Updates an existing knowledge article. |
-| 62 | `publish_article` | Publishes a knowledge article (sets workflow_state to 'published'). |
-| 63 | `list_articles` | Lists knowledge articles with optional filters. |
-| 64 | `get_article` | Retrieves a single knowledge article by sys_id. |
+| 59 | `create_kb_category` | Create a new category inside a ServiceNow Knowledge Base (kb_category table). |
+| 60 | `create_kb_article` | Create a new Knowledge Base article in the kb_knowledge table. |
+| 61 | `update_kb_article` | Update an existing Knowledge Base article in the kb_knowledge table. |
+| 62 | `publish_kb_article` | Publish a Knowledge Base article (sets workflow_state to 'published'). |
+| 63 | `list_kb_articles` | List Knowledge Base articles from the kb_knowledge table with optional filters. |
+| 64 | `get_kb_article` | Retrieve a single Knowledge Base article by sys_id from the kb_knowledge table. |
 
 ## Agile — Stories (5 tools)
 
@@ -171,13 +171,13 @@
 
 | # | Tool | Description |
 |---|------|-------------|
-| 89 | `list_changesets` | Lists local Update Sets (Changesets), with options to filter. |
-| 90 | `get_changeset_details` | Retrieves full details for a single update set. |
-| 91 | `create_changeset` | Creates a new local Update Set (changeset). |
-| 92 | `update_changeset` | Updates an existing update set (name or description). |
-| 93 | `commit_changeset` | Marks an update set as complete. |
-| 94 | `publish_changeset` | Publishes a completed update set for retrieval by remote instances. |
-| 95 | `add_file_to_changeset` | Adds (tracks) a configuration record inside the specified update set. |
+| 89 | `list_update_sets` | List ServiceNow Update Sets from the sys_update_set table, with optional filtering by state, name, or creator. |
+| 90 | `get_update_set_details` | Retrieve full details for a single ServiceNow Update Set by its sys_id. |
+| 91 | `create_update_set` | Create a new ServiceNow Update Set. Defaults to 'in progress' state. |
+| 92 | `update_update_set` | Update an existing ServiceNow Update Set's name or description. |
+| 93 | `commit_update_set` | Mark a ServiceNow Update Set as complete. |
+| 94 | `publish_update_set` | Publish a completed ServiceNow Update Set for retrieval by remote instances. |
+| 95 | `add_file_to_update_set` | Add (track) a configuration record inside the specified ServiceNow Update Set. |
 
 ## UI Policy Management (2 tools)
 

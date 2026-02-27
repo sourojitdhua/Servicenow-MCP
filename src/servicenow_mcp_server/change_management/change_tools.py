@@ -7,21 +7,23 @@ This module defines tools for interacting with the ServiceNow Change Management 
 from typing import Dict, Any, Optional
 from pydantic import Field
 from fastmcp import FastMCP
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.models import BaseToolParams
+from servicenow_mcp_server.models import BaseToolParams, get_client
 from servicenow_mcp_server.constants import ChangeState
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.tool_annotations import READ, WRITE
+from servicenow_mcp_server.tool_utils import snow_tool
 
 def register_tools(mcp: FastMCP):
     """Adds all tools defined in this file to the main server's MCP instance."""
-    mcp.add_tool(create_change_request)
-    mcp.add_tool(update_change_request)
-    mcp.add_tool(list_change_requests)
-    mcp.add_tool(get_change_request_details)
-    mcp.add_tool(add_change_task)
-    mcp.add_tool(submit_change_for_approval)
-    mcp.add_tool(approve_change)
-    mcp.add_tool(reject_change)
+    _tags = {"change"}
+
+    mcp.tool(create_change_request, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(update_change_request, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(list_change_requests, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(get_change_request_details, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(add_change_task, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(submit_change_for_approval, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(approve_change, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(reject_change, tags=_tags | {"write"}, annotations=WRITE)
 
 
 # ==============================================================================
@@ -76,171 +78,143 @@ class RejectChangeParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def create_change_request(params: CreateChangeRequestParams) -> Dict[str, Any]:
     """
     Creates a new Normal, Standard, or Emergency change request.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # Create the payload from the Pydantic model
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password"},
-                exclude_unset=True
-            )
+    async with get_client() as client:
+        payload = params.model_dump(exclude_unset=True)
+        return await client.send_request("POST", "/api/now/table/change_request", data=payload)
 
-            # We POST to the 'change_request' table.
-            return await client.send_request("POST", "/api/now/table/change_request", data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
-
+@snow_tool
 async def update_change_request(params: UpdateChangeRequestParams) -> Dict[str, Any]:
     """
     Updates one or more fields on an existing change request.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            update_data = params.model_dump(
-                exclude={"sys_id", "instance_url", "username", "password"},
-                exclude_unset=True
-            )
-            if not update_data:
-                return {"error": "No update data provided.", "message": "You must provide at least one field to update."}
+    async with get_client() as client:
+        update_data = params.model_dump(
+            exclude={"sys_id"},
+            exclude_unset=True
+        )
+        if not update_data:
+            return {"error": "No update data provided.", "message": "You must provide at least one field to update."}
 
-            endpoint = f"/api/now/table/change_request/{params.sys_id}"
-            return await client.send_request("PATCH", endpoint, data=update_data)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        endpoint = f"/api/now/table/change_request/{params.sys_id}"
+        return await client.send_request("PATCH", endpoint, data=update_data)
 
+@snow_tool
 async def list_change_requests(params: ListChangeRequestsParams) -> Dict[str, Any]:
     """
     Lists change requests with optional filtering and pagination.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            query_params = {
-                "sysparm_limit": params.limit,
-                "sysparm_offset": params.offset
-            }
-            if params.query:
-                query_params["sysparm_query"] = params.query
+    async with get_client() as client:
+        query_params = {
+            "sysparm_limit": params.limit,
+            "sysparm_offset": params.offset
+        }
+        if params.query:
+            query_params["sysparm_query"] = params.query
 
-            return await client.send_request("GET", "/api/now/table/change_request", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", "/api/now/table/change_request", params=query_params)
 
+@snow_tool
 async def get_change_request_details(params: GetChangeRequestDetailsParams) -> Dict[str, Any]:
     """
     Retrieves the full details of a single change request by its sys_id or number.
     Provide either 'sys_id' or 'number', but not both.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            if not params.sys_id and not params.number:
-                return {"error": "Missing identifier", "message": "You must provide either a 'sys_id' or a 'number'."}
-            if params.sys_id and params.number:
-                return {"error": "Ambiguous identifier", "message": "Please provide either 'sys_id' or 'number', not both."}
+    async with get_client() as client:
+        if not params.sys_id and not params.number:
+            return {"error": "Missing identifier", "message": "You must provide either a 'sys_id' or a 'number'."}
+        if params.sys_id and params.number:
+            return {"error": "Ambiguous identifier", "message": "Please provide either 'sys_id' or 'number', not both."}
 
-            if params.sys_id:
-                endpoint = f"/api/now/table/change_request/{params.sys_id}"
-                return await client.send_request("GET", endpoint)
+        if params.sys_id:
+            endpoint = f"/api/now/table/change_request/{params.sys_id}"
+            return await client.send_request("GET", endpoint)
 
-            if params.number:
-                query_params = {"sysparm_query": f"number={params.number}", "sysparm_limit": 1}
-                response = await client.send_request("GET", "/api/now/table/change_request", params=query_params)
+        if params.number:
+            query_params = {"sysparm_query": f"number={params.number}", "sysparm_limit": 1}
+            response = await client.send_request("GET", "/api/now/table/change_request", params=query_params)
 
-                if response and response.get('result'):
-                    return {"result": response['result'][0]}
-                else:
-                    return {"error": "Not Found", "message": f"Change request with number '{params.number}' was not found."}
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+            if response and response.get('result'):
+                return {"result": response['result'][0]}
+            else:
+                return {"error": "Not Found", "message": f"Change request with number '{params.number}' was not found."}
 
+@snow_tool
 async def add_change_task(params: AddChangeTaskParams) -> Dict[str, Any]:
     """
     Adds a new task to an existing change request.
     """
-    try:
-        # THE FIX: Indent the following lines to be inside the function.
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = {
-                "change_request": params.change_request_sys_id,
-                "short_description": params.short_description
-            }
-            # Change tasks are stored in the 'change_task' table.
-            return await client.send_request("POST", "/api/now/table/change_task", data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        payload = {
+            "change_request": params.change_request_sys_id,
+            "short_description": params.short_description
+        }
+        return await client.send_request("POST", "/api/now/table/change_task", data=payload)
 
+@snow_tool
 async def submit_change_for_approval(params: SubmitChangeForApprovalParams) -> Dict[str, Any]:
     """
     Submits a change request for approval by setting its state to 'Assess'.
     This typically triggers the approval workflow in ServiceNow.
     """
-    try:
-        # THE FIX: Indent the following lines.
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # The 'state' for 'Assess' in a Normal change is typically -4.
-            # This action moves the change from 'New' to the next step in the workflow.
-            update_data = {"state": ChangeState.ASSESS}
-            endpoint = f"/api/now/table/change_request/{params.sys_id}"
-            return await client.send_request("PATCH", endpoint, data=update_data)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        update_data = {"state": ChangeState.ASSESS}
+        endpoint = f"/api/now/table/change_request/{params.sys_id}"
+        return await client.send_request("PATCH", endpoint, data=update_data)
 
+@snow_tool
 async def approve_change(params: ApproveChangeParams) -> Dict[str, Any]:
     """
     Approves a change request. This finds the current user's approval record
     for the change and sets its state to 'approved'.
     """
-    try:
-        # THE FIX: Indent the following lines.
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # Step 1: Find the approval record for the current user and the specified change.
-            query = f"sysapproval={params.sys_id}^state=requested"
-            query_params = {"sysparm_query": query, "sysparm_limit": 1}
+    async with get_client() as client:
+        # Step 1: Find the approval record for the current user and the specified change.
+        query = f"sysapproval={params.sys_id}^state=requested"
+        query_params = {"sysparm_query": query, "sysparm_limit": 1}
 
-            approval_response = await client.send_request("GET", "/api/now/table/sysapproval_approver", params=query_params)
+        approval_response = await client.send_request("GET", "/api/now/table/sysapproval_approver", params=query_params)
 
-            if not approval_response.get('result'):
-                return {"error": "Approval Not Found", "message": "Could not find a pending approval record for this change. It may not be in the correct state or you may not be an approver."}
+        if not approval_response.get('result'):
+            return {"error": "Approval Not Found", "message": "Could not find a pending approval record for this change. It may not be in the correct state or you may not be an approver."}
 
-            approval_record_sys_id = approval_response['result'][0]['sys_id']
+        approval_record_sys_id = approval_response['result'][0]['sys_id']
 
-            # Step 2: Update that approval record to 'approved'.
-            update_data = {
-                "state": "approved",
-                "comments": params.approval_notes
-            }
-            endpoint = f"/api/now/table/sysapproval_approver/{approval_record_sys_id}"
-            return await client.send_request("PATCH", endpoint, data=update_data)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        # Step 2: Update that approval record to 'approved'.
+        update_data = {
+            "state": "approved",
+            "comments": params.approval_notes
+        }
+        endpoint = f"/api/now/table/sysapproval_approver/{approval_record_sys_id}"
+        return await client.send_request("PATCH", endpoint, data=update_data)
 
+@snow_tool
 async def reject_change(params: RejectChangeParams) -> Dict[str, Any]:
     """
     Rejects a change request. This finds the current user's approval record
     for the change and sets its state to 'rejected'.
 
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # Step 1: Find the pending approval record for the specified change.
-            query = f"sysapproval={params.sys_id}^state=requested"
-            query_params = {"sysparm_query": query, "sysparm_limit": 1}
+    async with get_client() as client:
+        # Step 1: Find the pending approval record for the specified change.
+        query = f"sysapproval={params.sys_id}^state=requested"
+        query_params = {"sysparm_query": query, "sysparm_limit": 1}
 
-            approval_response = await client.send_request("GET", "/api/now/table/sysapproval_approver", params=query_params)
+        approval_response = await client.send_request("GET", "/api/now/table/sysapproval_approver", params=query_params)
 
-            if not approval_response.get('result'):
-                return {"error": "Approval Not Found", "message": "Could not find a pending approval record for this change to reject."}
+        if not approval_response.get('result'):
+            return {"error": "Approval Not Found", "message": "Could not find a pending approval record for this change to reject."}
 
-            approval_record_sys_id = approval_response['result'][0]['sys_id']
+        approval_record_sys_id = approval_response['result'][0]['sys_id']
 
-            # Step 2: Update that approval record's state to 'rejected'.
-            update_data = {
-                "state": "rejected",
-                "comments": params.rejection_comments
-            }
-            endpoint = f"/api/now/table/sysapproval_approver/{approval_record_sys_id}"
-            return await client.send_request("PATCH", endpoint, data=update_data)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        # Step 2: Update that approval record's state to 'rejected'.
+        update_data = {
+            "state": "rejected",
+            "comments": params.rejection_comments
+        }
+        endpoint = f"/api/now/table/sysapproval_approver/{approval_record_sys_id}"
+        return await client.send_request("PATCH", endpoint, data=update_data)

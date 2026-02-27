@@ -5,12 +5,12 @@ Tools for interacting with ServiceNow SLA definitions and task SLAs.
 """
 
 from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
 from fastmcp import FastMCP
 
-from servicenow_mcp_server.models import BaseToolParams
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.models import BaseToolParams, get_client
+from servicenow_mcp_server.tool_annotations import READ
+from servicenow_mcp_server.tool_utils import snow_tool
 
 
 # ==============================================================================
@@ -19,9 +19,11 @@ from servicenow_mcp_server.exceptions import ServiceNowError
 
 def register_tools(mcp: FastMCP):
     """Registers all SLA management tools with the main MCP server instance."""
-    mcp.add_tool(list_sla_definitions)
-    mcp.add_tool(get_task_sla)
-    mcp.add_tool(list_breached_slas)
+    _tags = {"sla"}
+
+    mcp.tool(list_sla_definitions, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(get_task_sla, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(list_breached_slas, tags=_tags | {"read"}, annotations=READ)
 
 
 # ==============================================================================
@@ -48,63 +50,45 @@ class ListBreachedSLAsParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def list_sla_definitions(params: ListSLADefinitionsParams) -> Dict[str, Any]:
     """
     Lists SLA definitions from the contract_sla table.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            query_params = {"sysparm_limit": params.limit}
-            if params.query:
-                query_params["sysparm_query"] = params.query
+    async with get_client() as client:
+        query_params = {"sysparm_limit": params.limit}
+        if params.query:
+            query_params["sysparm_query"] = params.query
 
-            return await client.send_request("GET", "/api/now/table/contract_sla", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", "/api/now/table/contract_sla", params=query_params)
 
 
+@snow_tool
 async def get_task_sla(params: GetTaskSLAParams) -> Dict[str, Any]:
     """
     Retrieves SLA records attached to a specific task.
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            query_params = {
-                "sysparm_query": f"task={params.task_sys_id}",
-                "sysparm_limit": params.limit,
-            }
-            return await client.send_request("GET", "/api/now/table/task_sla", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        query_params = {
+            "sysparm_query": f"task={params.task_sys_id}",
+            "sysparm_limit": params.limit,
+        }
+        return await client.send_request("GET", "/api/now/table/task_sla", params=query_params)
 
 
+@snow_tool
 async def list_breached_slas(params: ListBreachedSLAsParams) -> Dict[str, Any]:
     """
     Lists task SLA records that have been breached (has_breached=true).
     """
-    try:
-        async with ServiceNowClient(
-            instance_url=params.instance_url,
-            username=params.username,
-            password=params.password,
-        ) as client:
-            query_parts = ["has_breached=true"]
-            if params.query:
-                query_parts.append(params.query)
+    async with get_client() as client:
+        query_parts = ["has_breached=true"]
+        if params.query:
+            query_parts.append(params.query)
 
-            query_params = {
-                "sysparm_query": "^".join(query_parts),
-                "sysparm_limit": params.limit,
-                "sysparm_offset": params.offset,
-            }
-            return await client.send_request("GET", "/api/now/table/task_sla", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        query_params = {
+            "sysparm_query": "^".join(query_parts),
+            "sysparm_limit": params.limit,
+            "sysparm_offset": params.offset,
+        }
+        return await client.send_request("GET", "/api/now/table/task_sla", params=query_params)

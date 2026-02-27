@@ -7,20 +7,22 @@ This module defines tools for interacting with the ServiceNow Knowledge Base.
 from typing import Dict, Any, Optional
 from pydantic import Field
 from fastmcp import FastMCP
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.models import BaseToolParams
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.models import BaseToolParams, get_client
+from servicenow_mcp_server.tool_annotations import READ, WRITE
+from servicenow_mcp_server.tool_utils import snow_tool
 
 def register_tools(mcp: FastMCP):
     """Adds all tools defined in this file to the main server's MCP instance."""
-    mcp.add_tool(create_knowledge_base)
-    mcp.add_tool(list_knowledge_bases)
-    mcp.add_tool(create_category)
-    mcp.add_tool(create_article)
-    mcp.add_tool(update_article)
-    mcp.add_tool(publish_article)
-    mcp.add_tool(list_articles)
-    mcp.add_tool(get_article)
+    _tags = {"kb"}
+
+    mcp.tool(create_knowledge_base, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(list_knowledge_bases, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(create_kb_category, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(create_kb_article, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(update_kb_article, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(publish_kb_article, tags=_tags | {"write"}, annotations=WRITE)
+    mcp.tool(list_kb_articles, tags=_tags | {"read"}, annotations=READ)
+    mcp.tool(get_kb_article, tags=_tags | {"read"}, annotations=READ)
 
 # ==============================================================================
 #  Pydantic Models
@@ -70,126 +72,105 @@ class GetArticleParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def create_knowledge_base(params: CreateKnowledgeBaseParams) -> Dict[str, Any]:
     """
     Creates a new Knowledge Base.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            # The table for Knowledge Bases is 'kb_knowledge_base'.
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password"},
-                exclude_unset=True
-            )
+    async with get_client() as client:
+        payload = params.model_dump(exclude_unset=True)
+        return await client.send_request("POST", "/api/now/table/kb_knowledge_base", data=payload)
 
-            return await client.send_request("POST", "/api/now/table/kb_knowledge_base", data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
-
+@snow_tool
 async def list_knowledge_bases(params: ListKnowledgeBasesParams) -> Dict[str, Any]:
     """List knowledge bases with optional title filter."""
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            query_parts = []
-            if params.title_filter:
-                query_parts.append(f"titleLIKE{params.title_filter}")
+    async with get_client() as client:
+        query_parts = []
+        if params.title_filter:
+            query_parts.append(f"titleLIKE{params.title_filter}")
 
-            query = "^".join(query_parts)
-            qp = {"sysparm_limit": params.limit}
-            if query:
-                qp["sysparm_query"] = query
+        query = "^".join(query_parts)
+        qp = {"sysparm_limit": params.limit}
+        if query:
+            qp["sysparm_query"] = query
 
-            return await client.send_request("GET", "/api/now/table/kb_knowledge_base", params=qp)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", "/api/now/table/kb_knowledge_base", params=qp)
 
-async def create_category(params: CreateCategoryParams) -> Dict[str, Any]:
-    """Create a new category inside a Knowledge Base."""
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = {
-                "label": params.name,
-                "value": params.name.lower().replace(" ", "_"),
-                "parent_id": params.knowledge_base_sys_id,
-                "parent_table": "kb_knowledge_base"
-            }
-            return await client.send_request("POST", "/api/now/table/kb_category", data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+@snow_tool
+async def create_kb_category(params: CreateCategoryParams) -> Dict[str, Any]:
+    """Create a new category inside a ServiceNow Knowledge Base (kb_category table)."""
+    async with get_client() as client:
+        payload = {
+            "label": params.name,
+            "value": params.name.lower().replace(" ", "_"),
+            "parent_id": params.knowledge_base_sys_id,
+            "parent_table": "kb_knowledge_base"
+        }
+        return await client.send_request("POST", "/api/now/table/kb_category", data=payload)
 
-async def create_article(params: CreateArticleParams) -> Dict[str, Any]:
-    """Create a new knowledge article."""
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = {
-                "kb_knowledge_base": params.knowledge_base_sys_id,
-                "short_description": params.title, # short_description IS the title field
-                "article_body": params.content, # The HTML field is article_body
-                "kb_category": params.category_sys_id,
-                "workflow_state": "published" if params.published else "draft"
-            }
-            payload = {k: v for k, v in payload.items() if v is not None}
-            return await client.send_request("POST", "/api/now/table/kb_knowledge", data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+@snow_tool
+async def create_kb_article(params: CreateArticleParams) -> Dict[str, Any]:
+    """Create a new Knowledge Base article in the kb_knowledge table."""
+    async with get_client() as client:
+        payload = {
+            "kb_knowledge_base": params.knowledge_base_sys_id,
+            "short_description": params.title,
+            "article_body": params.content,
+            "kb_category": params.category_sys_id,
+            "workflow_state": "published" if params.published else "draft"
+        }
+        payload = {k: v for k, v in payload.items() if v is not None}
+        return await client.send_request("POST", "/api/now/table/kb_knowledge", data=payload)
 
-async def update_article(params: UpdateArticleParams) -> Dict[str, Any]:
-    """Update an existing knowledge article."""
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password", "sys_id"},
-                exclude_unset=True
-            )
-            return await client.send_request(
-                "PATCH",
-                f"/api/now/table/kb_knowledge/{params.sys_id}",
-                data=payload
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+@snow_tool
+async def update_kb_article(params: UpdateArticleParams) -> Dict[str, Any]:
+    """Update an existing Knowledge Base article in the kb_knowledge table."""
+    async with get_client() as client:
+        payload = params.model_dump(
+            exclude={"sys_id"},
+            exclude_unset=True
+        )
+        return await client.send_request(
+            "PATCH",
+            f"/api/now/table/kb_knowledge/{params.sys_id}",
+            data=payload
+        )
 
-async def publish_article(params: PublishArticleParams) -> Dict[str, Any]:
-    """Publish a knowledge article (sets workflow_state to 'published')."""
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = {"workflow_state": "published"}
-            return await client.send_request(
-                "PATCH",
-                f"/api/now/table/kb_knowledge/{params.sys_id}",
-                data=payload
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+@snow_tool
+async def publish_kb_article(params: PublishArticleParams) -> Dict[str, Any]:
+    """Publish a Knowledge Base article (sets workflow_state to 'published')."""
+    async with get_client() as client:
+        payload = {"workflow_state": "published"}
+        return await client.send_request(
+            "PATCH",
+            f"/api/now/table/kb_knowledge/{params.sys_id}",
+            data=payload
+        )
 
-async def list_articles(params: ListArticlesParams) -> Dict[str, Any]:
-    """List knowledge articles with optional filters."""
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            query_parts = []
-            if params.knowledge_base_sys_id:
-                query_parts.append(f"kb_knowledge_base={params.knowledge_base_sys_id}")
-            if params.category_sys_id:
-                query_parts.append(f"category={params.category_sys_id}")
-            if params.published_only:
-                query_parts.append("workflow_state=published")
+@snow_tool
+async def list_kb_articles(params: ListArticlesParams) -> Dict[str, Any]:
+    """List Knowledge Base articles from the kb_knowledge table with optional filters."""
+    async with get_client() as client:
+        query_parts = []
+        if params.knowledge_base_sys_id:
+            query_parts.append(f"kb_knowledge_base={params.knowledge_base_sys_id}")
+        if params.category_sys_id:
+            query_parts.append(f"category={params.category_sys_id}")
+        if params.published_only:
+            query_parts.append("workflow_state=published")
 
-            query = "^".join(query_parts)
-            qp = {"sysparm_limit": params.limit}
-            if query:
-                qp["sysparm_query"] = query
+        query = "^".join(query_parts)
+        qp = {"sysparm_limit": params.limit}
+        if query:
+            qp["sysparm_query"] = query
 
-            return await client.send_request("GET", "/api/now/table/kb_knowledge", params=qp)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        return await client.send_request("GET", "/api/now/table/kb_knowledge", params=qp)
 
-async def get_article(params: GetArticleParams) -> Dict[str, Any]:
-    """Retrieve a single knowledge article by sys_id."""
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            return await client.send_request(
-                "GET",
-                f"/api/now/table/kb_knowledge/{params.sys_id}"
-            )
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+@snow_tool
+async def get_kb_article(params: GetArticleParams) -> Dict[str, Any]:
+    """Retrieve a single Knowledge Base article by sys_id from the kb_knowledge table."""
+    async with get_client() as client:
+        return await client.send_request(
+            "GET",
+            f"/api/now/table/kb_knowledge/{params.sys_id}"
+        )

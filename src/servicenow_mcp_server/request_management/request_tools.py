@@ -9,17 +9,19 @@ import base64
 from typing import Dict, Any, Optional, List
 from pydantic import Field
 from fastmcp import FastMCP
-from servicenow_mcp_server.utils import ServiceNowClient
-from servicenow_mcp_server.models import BaseToolParams
-from servicenow_mcp_server.exceptions import ServiceNowError
+from servicenow_mcp_server.models import BaseToolParams, get_client
+from servicenow_mcp_server.tool_annotations import READ, WRITE
+from servicenow_mcp_server.tool_utils import snow_tool
 
 def register_tools(main_mcp: FastMCP):
     """Adds all tools defined in this file to the main server's MCP instance."""
-    main_mcp.add_tool(create_request_ticket)
-    main_mcp.add_tool(get_request_ticket)
-    main_mcp.add_tool(list_request_tickets)
-    main_mcp.add_tool(add_comment_to_request)
-    main_mcp.add_tool(attach_file_to_record) # This one is generic and stays the same
+    _tags = {"request"}
+
+    main_mcp.tool(create_request_ticket, tags=_tags | {"write"}, annotations=WRITE)
+    main_mcp.tool(get_request_ticket, tags=_tags | {"read"}, annotations=READ)
+    main_mcp.tool(list_request_tickets, tags=_tags | {"read"}, annotations=READ)
+    main_mcp.tool(add_comment_to_request, tags=_tags | {"write"}, annotations=WRITE)
+    main_mcp.tool(attach_file_to_record, tags=_tags | {"write"}, annotations=WRITE)
 
 # ==============================================================================
 #  Pydantic Models
@@ -53,75 +55,67 @@ class AttachFileToRecordParams(BaseToolParams):
 #  Tool Functions
 # ==============================================================================
 
+@snow_tool
 async def create_request_ticket(params: CreateRequestTicketParams) -> Dict[str, Any]:
     """
     Creates a new, simple service request ticket (sc_request).
     Note: This creates a generic request, not one from a specific catalog item.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = params.model_dump(
-                exclude={"instance_url", "username", "password"},
-                exclude_unset=True
-            )
-            return await client.send_request("POST", "/api/now/table/sc_request", data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        payload = params.model_dump(
+            exclude=set(),
+            exclude_unset=True
+        )
+        return await client.send_request("POST", "/api/now/table/sc_request", data=payload)
 
+@snow_tool
 async def get_request_ticket(params: GetRequestTicketParams) -> Dict[str, Any]:
     """
     Retrieves the details of a specific request ticket (REQ) by its sys_id or number.
     """
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            if not params.sys_id and not params.number:
-                return {"error": "Missing identifier", "message": "Provide either 'sys_id' or 'number'."}
+    async with get_client() as client:
+        if not params.sys_id and not params.number:
+            return {"error": "Missing identifier", "message": "Provide either 'sys_id' or 'number'."}
 
-            query = f"sys_id={params.sys_id}" if params.sys_id else f"number={params.number}"
-            query_params = {"sysparm_query": query, "sysparm_limit": 1}
-            response = await client.send_request("GET", "/api/now/table/sc_request", params=query_params)
+        query = f"sys_id={params.sys_id}" if params.sys_id else f"number={params.number}"
+        query_params = {"sysparm_query": query, "sysparm_limit": 1}
+        response = await client.send_request("GET", "/api/now/table/sc_request", params=query_params)
 
-            if response and response.get('result'):
-                return {"result": response['result'][0]}
-            else:
-                return {"error": "Not Found", "message": "Request ticket not found."}
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+        if response and response.get('result'):
+            return {"result": response['result'][0]}
+        else:
+            return {"error": "Not Found", "message": "Request ticket not found."}
 
+@snow_tool
 async def list_request_tickets(params: ListRequestTicketsParams) -> Dict[str, Any]:
     """Lists request tickets (sc_request) with optional filters."""
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            query_params = {
-                "sysparm_query": f"active={str(params.active).lower()}",
-                "sysparm_limit": params.limit,
-                "sysparm_offset": params.offset
-            }
-            return await client.send_request("GET", "/api/now/table/sc_request", params=query_params)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        query_params = {
+            "sysparm_query": f"active={str(params.active).lower()}",
+            "sysparm_limit": params.limit,
+            "sysparm_offset": params.offset
+        }
+        return await client.send_request("GET", "/api/now/table/sc_request", params=query_params)
 
+@snow_tool
 async def add_comment_to_request(params: AddCommentToRequestParams) -> Dict[str, Any]:
     """Adds a customer-visible comment to a request ticket (REQ)."""
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            payload = {"comments": params.comment}
-            endpoint = f"/api/now/table/sc_request/{params.sys_id}"
-            return await client.send_request("PATCH", endpoint, data=payload)
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        payload = {"comments": params.comment}
+        endpoint = f"/api/now/table/sc_request/{params.sys_id}"
+        return await client.send_request("PATCH", endpoint, data=payload)
 
+@snow_tool
 async def attach_file_to_record(params: AttachFileToRecordParams) -> Dict[str, Any]:
     """Attaches a file to any record in ServiceNow. The file content must be Base64 encoded."""
-    try:
-        async with ServiceNowClient(instance_url=params.instance_url, username=params.username, password=params.password) as client:
-            endpoint = "/api/now/attachment/file"
-            query_params = { "table_name": params.table_name, "table_sys_id": params.record_sys_id, "file_name": params.file_name }
-            try:
-                file_bytes = base64.b64decode(params.file_content_base64)
-            except Exception as e:
-                return {"error": "Base64 Decode Error", "details": str(e)}
+    from fastmcp.exceptions import ToolError
 
-            return await client.send_raw_request("POST", endpoint, params=query_params, data=file_bytes, headers={"Content-Type": "application/octet-stream"})
-    except ServiceNowError as e:
-        return {"error": type(e).__name__, "message": e.message, "details": e.details}
+    async with get_client() as client:
+        endpoint = "/api/now/attachment/file"
+        query_params = { "table_name": params.table_name, "table_sys_id": params.record_sys_id, "file_name": params.file_name }
+        try:
+            file_bytes = base64.b64decode(params.file_content_base64)
+        except Exception as e:
+            raise ToolError(f"Base64 decode error: {e}") from e
+
+        return await client.send_raw_request("POST", endpoint, params=query_params, data=file_bytes, headers={"Content-Type": "application/octet-stream"})
