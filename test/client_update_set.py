@@ -1,7 +1,6 @@
 # Test script for Update Set Management tools
 # Credentials are managed by the MCP server via environment variables.
 import asyncio
-import json
 from fastmcp import Client
 
 client = Client({
@@ -13,13 +12,6 @@ client = Client({
         }
     }
 })
-
-
-def parse_result(result):
-    """Parse tool call result into a dict."""
-    if result and hasattr(result[0], 'text'):
-        return json.loads(result[0].text)
-    return {}
 
 
 async def main():
@@ -37,11 +29,10 @@ async def main():
             print("[Phase 1] Testing 'create_update_set'...")
             print("="*60)
             us_name = "MCP Test Update Set"
-            create_us_result = await client.call_tool("create_update_set", {
-                "name": us_name,
-                "description": "A test update set."
+            result = await client.call_tool("create_update_set", {
+                "params": {"name": us_name, "description": "A test update set."}
             })
-            data = parse_result(create_us_result)
+            data = result.data
 
             if 'error' in data:
                 print("FAIL - update set creation:", data)
@@ -55,28 +46,31 @@ async def main():
             print("\n" + "="*60)
             print("[Phase 2] Creating a temporary script include...")
             print("="*60)
-            script_result = await client.call_tool("create_script_include", {
-                "name": script_name,
-                "api_name": f"global.{script_name}",
-                "script": "function hello() { return 'world'; }"
+            result = await client.call_tool("create_script_include", {
+                "params": {
+                    "name": script_name,
+                    "api_name": f"global.{script_name}",
+                    "script": "function hello() { return 'world'; }"
+                }
             })
-            script_data = parse_result(script_result)
-            script_sys_id = script_data['result']['sys_id']
+            script_sys_id = result.data['result']['sys_id']
             print(f"OK - Created temporary script include '{script_name}' with sys_id: {script_sys_id}")
 
             # --- Phase 3: Add the script include to the update set ---
             print("\n" + "="*60)
             print("[Phase 3] Testing 'add_file_to_update_set'...")
             print("="*60)
-            add_file_result = await client.call_tool("add_file_to_update_set", {
-                "update_set_sys_id": update_set_sys_id,
-                "file_type": "sys_script_include",
-                "file_sys_id": script_sys_id
+            result = await client.call_tool("add_file_to_update_set", {
+                "params": {
+                    "update_set_sys_id": update_set_sys_id,
+                    "file_type": "sys_script_include",
+                    "file_sys_id": script_sys_id
+                }
             })
-            add_data = parse_result(add_file_result)
+            data = result.data
 
-            if 'error' in add_data:
-                print("FAIL - adding file to update set:", add_data)
+            if 'error' in data:
+                print("FAIL - adding file to update set:", data)
             else:
                 print("OK - Added script include to the update set.")
 
@@ -84,14 +78,16 @@ async def main():
             print("\n" + "="*60)
             print("[Phase 4] Testing 'get_update_set_details' and verifying content...")
             print("="*60)
-            verify_result = await client.call_tool("get_records_from_table", {
-                "table_name": "sys_update_xml",
-                "query": f"update_set={update_set_sys_id}",
-                "limit": 1
+            result = await client.call_tool("get_records_from_table", {
+                "params": {
+                    "table_name": "sys_update_xml",
+                    "query": f"update_set={update_set_sys_id}",
+                    "limit": 1
+                }
             })
-            verify_data = parse_result(verify_result)
+            data = result.data
 
-            if not verify_data.get('result'):
+            if not data.get('result'):
                 print("FAIL - script was not found inside the update set.")
             else:
                 print("OK - Found the script record inside the update set.")
@@ -101,20 +97,19 @@ async def main():
             print("[Phase 5] Testing 'update_update_set' and 'commit_update_set'...")
             print("="*60)
             await client.call_tool("update_update_set", {
-                "sys_id": update_set_sys_id,
-                "description": "UPDATED - Ready for commit."
+                "params": {"sys_id": update_set_sys_id, "description": "UPDATED - Ready for commit."}
             })
             print("OK - Updated update set description.")
 
-            commit_result = await client.call_tool("commit_update_set", {
-                "sys_id": update_set_sys_id
+            result = await client.call_tool("commit_update_set", {
+                "params": {"sys_id": update_set_sys_id}
             })
-            commit_data = parse_result(commit_result)
+            data = result.data
 
-            if 'error' in commit_data:
-                print("FAIL - during commit:", commit_data)
+            if result.is_error:
+                print("FAIL - during commit:", data)
             else:
-                final_state = commit_data.get('result', {}).get('state')
+                final_state = data.get('result', {}).get('state')
                 print(f"OK - Committed update set. Final state: '{final_state}'")
                 if final_state != 'complete':
                     print("WARNING: Final state is not 'complete'.")
@@ -123,13 +118,12 @@ async def main():
             print("\n" + "="*60)
             print("[Phase 6] Testing 'publish_update_set'...")
             print("="*60)
-            publish_result = await client.call_tool("publish_update_set", {
-                "sys_id": update_set_sys_id
+            result = await client.call_tool("publish_update_set", {
+                "params": {"sys_id": update_set_sys_id}
             })
-            publish_data = parse_result(publish_result)
 
-            if 'error' in publish_data:
-                print(f"WARNING - Publish failed (can be expected due to permissions): {publish_data}")
+            if result.is_error:
+                print(f"WARNING - Publish failed (can be expected due to permissions)")
             else:
                 print("OK - Publish command sent successfully.")
 
